@@ -488,7 +488,7 @@ function EmbyAuthSettingsTab() {
     >
       <SettingsSectionTitle icon="shield" title="Emby 授权" />
       <Alert
-        description="用于神医助手计划任务的立即执行和进度读取。请在 Emby 控制台的 API Keys 中新建秘钥，然后填写到这里。"
+        description="请在 Emby 控制台的 API Keys 中新建秘钥，然后填写到这里。"
         message="填写 Emby API Key"
         showIcon
         type="info"

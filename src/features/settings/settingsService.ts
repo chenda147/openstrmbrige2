@@ -1,7 +1,5 @@
 import { getApiBaseUrl } from '../../shared/config/runtimeConfig'
 import type {
-  AiRenameSettings,
-  AiRenameSettingsUpdate,
   EmbySettings,
   Proxy302Settings,
   StrmSettings,
@@ -9,39 +7,13 @@ import type {
 } from '../../shared/types/domain'
 
 export interface AppSettings {
-  aiRename: AiRenameSettings
   strm: StrmSettings
   proxy302: Proxy302Settings
   emby: EmbySettings
   webhook: WebhookSettings
 }
 
-export interface AiRenameConnectionTestResult {
-  completionTokens: number
-  latencyMs: number
-  message: string
-  model: string
-  ok: boolean
-  tokenCountEstimated: boolean
-  tokensPerSecond: number
-}
-
-export interface AiRenameTmdbTestResult {
-  latencyMs: number
-  message: string
-  ok: boolean
-}
-
-export interface AiRenameModelDiscoveryResult {
-  count: number
-  message: string
-  models: Array<{ id: string; ownedBy?: string }>
-  ok: boolean
-}
-
 export interface SettingsService {
-  discoverAiRenameModels(settings: AiRenameSettingsUpdate): Promise<AiRenameModelDiscoveryResult>
-  getAiRenameSettings(): AiRenameSettings
   getProgramBaseUrl(): string
   getStrmSettings(): StrmSettings
   getProxy302Settings(): Proxy302Settings
@@ -49,9 +21,6 @@ export interface SettingsService {
   getWebhookSettings(): WebhookSettings
   loadSettings(): Promise<AppSettings>
   saveStrmSettings(settings: StrmSettings): Promise<StrmSettings>
-  saveAiRenameSettings(settings: AiRenameSettingsUpdate): Promise<AiRenameSettings>
-  testAiRenameSettings(settings: AiRenameSettingsUpdate): Promise<AiRenameConnectionTestResult>
-  testAiRenameTmdb(settings: AiRenameSettingsUpdate): Promise<AiRenameTmdbTestResult>
   saveProxy302Settings(settings: Proxy302Settings): Promise<Proxy302Settings>
   saveEmbySettings(settings: EmbySettings): Promise<EmbySettings>
   saveWebhookSettings(settings: WebhookSettings): Promise<WebhookSettings>
@@ -161,38 +130,6 @@ function getDefaultStrmSettings(): StrmSettings {
   }
 }
 
-function getDefaultAiRenameSettings(): AiRenameSettings {
-  return {
-    apiKeyConfigured: false,
-    baseUrl: 'https://api.openai.com/v1',
-    customParameters: '{}',
-    model: '',
-    namingStyle: 'zh-en',
-    promptTemplate: [
-      '你是电影与电视剧媒体库命名分析器。请仅依据现有目录名和文件名识别媒体信息。',
-      '先判断目录是电视剧、单部电影还是电影合集，再识别正式中文名、英文名、年份、季集号、版本号和分段标记。',
-      '电影合集中的每个视频必须分别识别片名和年份，不得把数字续集识别为同一电视剧的多集。',
-      '目录季号与文件季号冲突时，以多数视频文件中可验证的季集信息为准。',
-      '广告图片、网站宣传文件、发布组与画质编码信息应忽略；无法可靠识别的条目不要猜测。',
-      '字幕、NFO、海报等附属文件只在能可靠关联视频时标记。',
-    ].join('\n'),
-    rebuildFolders: false,
-    tmdbBaseUrl: 'https://api.themoviedb.org/3',
-    tmdbEnabled: false,
-    tmdbLanguage: 'zh-CN',
-    tmdbTokenConfigured: false,
-  }
-}
-
-function normalizeAiRenameSettings(
-  settings: Partial<AiRenameSettings> | undefined,
-): AiRenameSettings {
-  return {
-    ...getDefaultAiRenameSettings(),
-    ...settings,
-  }
-}
-
 function getDefaultProxy302Settings(): Proxy302Settings {
   return {
     engine: 'go-emby2openlist',
@@ -289,31 +226,7 @@ async function putSettingsSection<TResponse, TRequest = TResponse>(
 }
 
 export const settingsService: SettingsService = {
-  async discoverAiRenameModels(settings) {
-    if (import.meta.env.MODE === 'test') {
-      return {
-        count: 2,
-        message: '已探测到 2 个模型',
-        models: [
-          { id: 'gpt-4.1-mini', ownedBy: 'openai' },
-          { id: 'test-model', ownedBy: 'test' },
-        ],
-        ok: true,
-      }
-    }
-
-    const response = await fetch(`${backendBaseUrl}/api/ai-rename/models`, {
-      body: JSON.stringify(settings),
-      headers: { 'Content-Type': 'application/json' },
-      method: 'POST',
-    })
-
-    return readJsonResponse<AiRenameModelDiscoveryResult>(response)
-  },
   getProgramBaseUrl,
-  getAiRenameSettings() {
-    return getDefaultAiRenameSettings()
-  },
   getStrmSettings() {
     return normalizeStrmSettings()
   },
@@ -329,7 +242,6 @@ export const settingsService: SettingsService = {
   async loadSettings() {
     if (import.meta.env.MODE === 'test') {
       return {
-        aiRename: getDefaultAiRenameSettings(),
         emby: getDefaultEmbySettings(),
         proxy302: getDefaultProxy302Settings(),
         strm: normalizeStrmSettings(),
@@ -338,26 +250,25 @@ export const settingsService: SettingsService = {
     }
 
     const response = await fetch(settingsUrl)
-    const settings = await readJsonResponse<AppSettings>(response)
-    const legacyProxy302Settings = settings.proxy302 as LegacyProxy302Settings
+    const settings = (await readJsonResponse(response)) as Record<string, unknown>
+    const legacyProxy302Settings = (settings.proxy302 as LegacyProxy302Settings) || {}
 
     return {
-      aiRename: normalizeAiRenameSettings(settings.aiRename),
       emby: {
         ...getDefaultEmbySettings(),
-        ...settings.emby,
+        ...(settings.emby as Partial<EmbySettings>),
         apiKey:
-          settings.emby?.apiKey ||
+          (settings.emby as EmbySettings)?.apiKey ||
           legacyProxy302Settings.embyApiKey ||
           legacyProxy302Settings.mediaServerToken ||
           '',
       },
       proxy302: {
         ...getDefaultProxy302Settings(),
-        ...settings.proxy302,
+        ...(settings.proxy302 as Partial<Proxy302Settings>),
       },
-      strm: normalizeStrmSettings(settings.strm),
-      webhook: normalizeWebhookSettings(settings.webhook),
+      strm: normalizeStrmSettings(settings.strm as Partial<StrmSettings>),
+      webhook: normalizeWebhookSettings(settings.webhook as Partial<WebhookSettings>),
     }
   },
   async saveStrmSettings(settings) {
@@ -368,55 +279,6 @@ export const settingsService: SettingsService = {
     }
 
     return normalizeStrmSettings(await putSettingsSection('strm', normalizedSettings))
-  },
-  async saveAiRenameSettings(settings) {
-    if (import.meta.env.MODE === 'test') {
-      return {
-        ...normalizeAiRenameSettings(settings),
-        apiKeyConfigured: Boolean(settings.apiKey),
-        tmdbTokenConfigured: Boolean(settings.tmdbToken),
-      }
-    }
-
-    return putSettingsSection<AiRenameSettings, AiRenameSettingsUpdate>('ai-rename', settings)
-  },
-  async testAiRenameSettings(settings) {
-    if (import.meta.env.MODE === 'test') {
-      return {
-        completionTokens: 24,
-        latencyMs: 320,
-        message: 'AI 模型可用性测试通过',
-        model: settings.model,
-        ok: true,
-        tokenCountEstimated: false,
-        tokensPerSecond: 75,
-      }
-    }
-
-    const response = await fetch(`${backendBaseUrl}/api/ai-rename/test`, {
-      body: JSON.stringify(settings),
-      headers: { 'Content-Type': 'application/json' },
-      method: 'POST',
-    })
-
-    return readJsonResponse<AiRenameConnectionTestResult>(response)
-  },
-  async testAiRenameTmdb(settings) {
-    if (import.meta.env.MODE === 'test') {
-      return {
-        latencyMs: 95,
-        message: 'TMDB 连接测试通过',
-        ok: true,
-      }
-    }
-
-    const response = await fetch(`${backendBaseUrl}/api/ai-rename/tmdb/test`, {
-      body: JSON.stringify(settings),
-      headers: { 'Content-Type': 'application/json' },
-      method: 'POST',
-    })
-
-    return readJsonResponse<AiRenameTmdbTestResult>(response)
   },
   async saveProxy302Settings(settings) {
     if (import.meta.env.MODE === 'test') {
