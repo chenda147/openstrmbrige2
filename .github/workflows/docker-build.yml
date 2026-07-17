@@ -6,6 +6,10 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 env:
   # GitHub 镜像仓库地址（免费、自动可用）
   GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/openstrmbridge
