@@ -1,6 +1,6 @@
 services:
   openstrmbridge:
-    image: diead/openstrmbridge:${OPENSTRMBRIDGE_TAG:-v0.1.7}
+    image: ghcr.io/chenda147/openstrmbridge:latest
     container_name: openstrmbridge
     restart: unless-stopped
     environment:
