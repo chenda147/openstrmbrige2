@@ -342,14 +342,14 @@ export function TaskManagementPage() {
     setTasksLoading(true)
 
     try {
-      const [loadedTasks, loadedStorages, loadedSettings] = await Promise.all([
+      const [tasksResult, storagesResult, loadedSettings] = await Promise.all([
         taskService.list(),
         storageService.list(),
         settingsService.loadSettings(),
       ])
 
-      setTasks(loadedTasks)
-      setStorages(loadedStorages)
+      setTasks(tasksResult.items)
+      setStorages(storagesResult.items)
       setTaskOutputRoot(loadedSettings.strm.outputRoot)
     } catch (error) {
       message.error(error instanceof Error ? error.message : '读取任务失败')
@@ -365,7 +365,7 @@ export function TaskManagementPage() {
       setTasksLoading(true)
 
       try {
-        const [loadedTasks, loadedStorages, loadedSettings] = await Promise.all([
+        const [tasksResult, storagesResult, loadedSettings] = await Promise.all([
           taskService.list(),
           storageService.list(),
           settingsService.loadSettings(),
@@ -375,8 +375,8 @@ export function TaskManagementPage() {
           return
         }
 
-        setTasks(loadedTasks)
-        setStorages(loadedStorages)
+        setTasks(tasksResult.items)
+        setStorages(storagesResult.items)
         setTaskOutputRoot(loadedSettings.strm.outputRoot)
       } catch (error) {
         if (mounted) {
@@ -478,10 +478,10 @@ export function TaskManagementPage() {
 
     async function refreshTaskList() {
       try {
-        const loadedTasks = await taskService.list()
+        const tasksResult = await taskService.list()
 
         if (!cancelled) {
-          setTasks(loadedTasks)
+          setTasks(tasksResult.items)
         }
       } catch {
         // Keep the foreground workflow quiet if the backend is temporarily busy.

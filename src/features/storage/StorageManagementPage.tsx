@@ -326,10 +326,10 @@ export function StorageManagementPage() {
       setStoragesLoading(true)
 
       try {
-        const loadedStorages = await storageService.list()
+        const storagesResult = await storageService.list()
 
         if (mounted) {
-          setStorages(loadedStorages)
+          setStorages(storagesResult.items)
         }
       } catch {
         if (mounted) {
