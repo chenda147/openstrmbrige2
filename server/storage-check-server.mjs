@@ -315,6 +315,7 @@ const activeTaskControllers = new Map()
 
 function createTaskLogBuffer(taskId, initialLines = []) {
   const lines = [...initialLines]
+  const context = { progressIndex: -1 }
 
   function publish(status = 'running') {
     taskRuntimeLogs.set(taskId, {
@@ -331,9 +332,19 @@ function createTaskLogBuffer(taskId, initialLines = []) {
       publish(status)
     },
     push(...nextLines) {
+      context.progressIndex = -1
       lines.push(...nextLines)
       publish()
       return lines.length
+    },
+    setProgress(line) {
+      if (context.progressIndex >= 0 && context.progressIndex < lines.length) {
+        lines[context.progressIndex] = line
+      } else {
+        context.progressIndex = lines.length
+        lines.push(line)
+      }
+      publish()
     },
     text() {
       return lines.join('\n')
@@ -7626,7 +7637,7 @@ async function scanAndGenerateStrmEntries({
 
         if (scannedDirectories - lastProgressScan >= 20) {
           lastProgressScan = scannedDirectories
-          logLines.push(
+          logLines.setProgress(
             `扫描进度: ${scannedDirectories} 目录, 生成 ${generated} / 跳过 ${skipped} / 失败 ${failed}`,
           )
         }
@@ -7653,7 +7664,7 @@ async function scanAndGenerateStrmEntries({
     logLines.push('达到扫描上限，已停止继续递归。')
   }
 
-  logLines.push(
+  logLines.setProgress(
     `扫描完成: ${scannedDirectories} 目录, 生成 ${generated} / 跳过 ${skipped} / 失败 ${failed}`,
   )
 
