@@ -16,7 +16,7 @@ COPY index.html vite.config.ts tsconfig.json tsconfig.app.json tsconfig.node.jso
 COPY public ./public
 COPY src ./src
 
-RUN pnpm build
+RUN npx vite build
 
 FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-alpine AS ge2o-web-builder
 
