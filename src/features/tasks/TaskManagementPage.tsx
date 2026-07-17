@@ -257,17 +257,20 @@ function getTaskLogLineClassName(line: string) {
   const hasFailureCount = /(?:失败|目录读取失败)\s*[1-9]\d*\s*个/.test(text)
 
   if (
-    /^(生成失败|目录读取失败|OpenList 目录缓存刷新失败|更新 STRM 索引失败)/.test(text) ||
+    /^(生成失败|目录读取失败|OpenList 目录缓存刷新失败|更新 STRM 索引失败|同步 STRM 索引失败)/.test(text) ||
     /任务失败:/.test(text) ||
+    /^\s+失败:/.test(text) ||
+    /^\s+清理失败:/.test(text) ||
     hasFailureCount
   ) {
     return 'task-log-line task-log-line-danger'
   }
 
   if (
-    /^(生成成功|生成:|跳过已存在|已刷新 OpenList 目录缓存|已更新 STRM 索引)/.test(text) ||
-    (/^生成完成/.test(text) && !hasFailureCount) ||
-    /任务完成$/.test(text)
+    /^(已刷新 OpenList 目录缓存|已更新 STRM 索引|已同步 STRM 索引)/.test(text) ||
+    (/^(扫描完成|生成完成|旧 STRM 清理完成)/.test(text) && !hasFailureCount) ||
+    /任务完成$/.test(text) ||
+    /^扫描进度:/.test(text)
   ) {
     return 'task-log-line task-log-line-success'
   }

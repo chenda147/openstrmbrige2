@@ -119,7 +119,6 @@ describe('OpenStrmBridge shell', () => {
   it.each([
     ['/tasks', '任务管理', '任务总数'],
     ['/storage', '存储管理', '存储总数'],
-    ['/browser', '存储浏览', '当前存储'],
     ['/api-access', 'API 接口', 'API 状态'],
     ['/settings', '系统设置', 'Webhook'],
   ])('renders the refreshed dashboard shell for %s', (path, heading, summaryLabel) => {
@@ -156,16 +155,6 @@ describe('OpenStrmBridge shell', () => {
 
     expect(screen.queryByText('请选择接入方式')).not.toBeInTheDocument()
     expect(await screen.findByText('请输入存储名')).toBeInTheDocument()
-  })
-
-  it('filters file browser entries by the current directory search', async () => {
-    const user = userEvent.setup()
-    renderRoute('/browser')
-
-    await user.type(screen.getByPlaceholderText('搜索当前目录...'), 'poster')
-
-    expect(screen.getByText('poster.jpg')).toBeInTheDocument()
-    expect(screen.queryByText('电影')).not.toBeInTheDocument()
   })
 
   it('shows feedback after saving STRM settings', async () => {

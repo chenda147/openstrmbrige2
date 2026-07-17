@@ -13,7 +13,6 @@ export const brandConfig = {
 export const routes = {
   tasks: { path: '/tasks', label: '任务管理', icon: 'tasks' },
   storage: { path: '/storage', label: '存储管理', icon: 'storage' },
-  browser: { path: '/browser', label: '存储浏览', icon: 'browser' },
   apiAccess: { path: '/api-access', label: 'API 接口', icon: 'shield' },
   settings: { path: '/settings', label: '系统设置', icon: 'settings' },
 } as const

@@ -311,6 +311,7 @@ const taskSchedulerIntervalMs = Number.isFinite(configuredTaskSchedulerIntervalM
 const scheduledTaskIds = new Set()
 let taskSchedulerRunning = false
 let taskSchedulerTimer = null
+const activeTaskControllers = new Map()
 
 function createTaskLogBuffer(taskId, initialLines = []) {
   const lines = [...initialLines]
@@ -1293,7 +1294,9 @@ async function deleteStorage(storageId) {
 function safePathSegment(value, fallback = 'task') {
   const safeValue = String(value ?? '')
     .trim()
-    .replace(/[<>:"/\\|?*]/g, '_')
+    .replace(/:/g, '\uFF1A')
+    .replace(/"/g, '\u201C')
+    .replace(/[<>|?*\\/]/g, '_')
     .replace(/\s+/g, ' ')
 
   return safeValue || fallback
@@ -7360,7 +7363,6 @@ async function pruneEmptyStrmDirectories(directoryPaths, outputDirectory, logLin
     try {
       await rmdir(directoryPath)
       removed += 1
-      logLines.push(`清理空目录: ${path.relative(resolvedOutputDirectory, directoryPath)}`)
     } catch (error) {
       if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error?.code)) {
         logLines.push(
@@ -7428,6 +7430,8 @@ async function cleanupStaleStrmFiles({
 
   logLines.push(`发现 ${staleEntries.length} 个失效 STRM，开始安全清理。`)
 
+  const cleanupFailedEntries = []
+
   for (const [fileKey, entry] of staleEntries) {
     const staleFile = path.resolve(String(entry.strmFile))
     const relativeFile = path.relative(resolvedOutputDirectory, staleFile)
@@ -7438,13 +7442,11 @@ async function cleanupStaleStrmFiles({
 
     if (otherTaskFiles.has(fileKey)) {
       shared += 1
-      logLines.push(`保留其他任务仍在引用的 STRM: ${relativeFile}`)
       continue
     }
 
     if (!isSafeTaskFile) {
       detached += 1
-      logLines.push(`已移除历史或越界 STRM 索引（未删除磁盘文件）: ${staleFile}`)
       continue
     }
 
@@ -7452,18 +7454,16 @@ async function cleanupStaleStrmFiles({
       await unlink(staleFile)
       deleted += 1
       affectedDirectories.add(path.dirname(staleFile))
-      logLines.push(`已删除失效 STRM: ${relativeFile}`)
     } catch (error) {
       if (error?.code === 'ENOENT') {
         missing += 1
         affectedDirectories.add(path.dirname(staleFile))
-        logLines.push(`失效 STRM 已不存在，仅移除索引: ${relativeFile}`)
         continue
       }
 
       failed += 1
       retainedEntries.push(entry)
-      logLines.push(`删除失效 STRM 失败: ${relativeFile} - ${getErrorMessage(error)}`)
+      cleanupFailedEntries.push({ path: relativeFile, error: getErrorMessage(error) })
     }
   }
 
@@ -7475,6 +7475,12 @@ async function cleanupStaleStrmFiles({
   logLines.push(
     `旧 STRM 清理完成：删除 ${deleted} 个，已不存在 ${missing} 个，移除历史索引 ${detached} 个，其他任务引用 ${shared} 个，失败 ${failed} 个，清理空目录 ${removedDirectories} 个。`,
   )
+
+  if (cleanupFailedEntries.length > 0) {
+    for (const entry of cleanupFailedEntries) {
+      logLines.push(`  清理失败: ${entry.path} — ${entry.error}`)
+    }
+  }
 
   return {
     deleted,
@@ -7492,6 +7498,7 @@ async function scanAndGenerateStrmEntries({
   logLines,
   outputDirectory,
   settings,
+  signal,
   storage,
   strmSettings,
   task,
@@ -7509,6 +7516,8 @@ async function scanAndGenerateStrmEntries({
   let generated = 0
   let skipped = 0
   let failed = 0
+  const failedEntries = []
+  let lastProgressScan = 0
 
   logLines.push('>>> 开始扫描并生成')
 
@@ -7525,7 +7534,7 @@ async function scanAndGenerateStrmEntries({
   }
 
   function shouldStopScanning() {
-    return claimedDirectories >= scanLimits.directories || mediaFiles >= scanLimits.mediaFiles
+    return signal?.aborted || claimedDirectories >= scanLimits.directories || mediaFiles >= scanLimits.mediaFiles
   }
 
   async function takeDirectory() {
@@ -7551,6 +7560,8 @@ async function scanAndGenerateStrmEntries({
   }
 
   async function generateMediaEntry(entry) {
+    if (signal?.aborted) return
+
     mediaFiles += 1
 
     try {
@@ -7567,19 +7578,23 @@ async function scanAndGenerateStrmEntries({
 
       if (result.status === 'skipped') {
         skipped += 1
-        logLines.push(`跳过已存在: ${result.relativeOutputFile}`)
       } else {
         generated += 1
-        logLines.push(`生成成功: ${result.relativeOutputFile}`)
       }
     } catch (error) {
       failed += 1
-      logLines.push(`生成失败: ${entry.path} - ${getErrorMessage(error)}`)
+      failedEntries.push({ path: entry.path, error: getErrorMessage(error) })
     }
   }
 
   async function scanWorker() {
     while (true) {
+      if (signal?.aborted) {
+        activeDirectories -= 1
+        wakeWorkers()
+        return
+      }
+
       const currentPath = await takeDirectory()
 
       if (!currentPath) {
@@ -7590,7 +7605,6 @@ async function scanAndGenerateStrmEntries({
         const result = await listAllStorageEntries(storage, currentPath)
         const mediaEntries = []
         scannedDirectories += 1
-        logLines.push(`读取目录: ${result.path}`)
 
         for (const entry of result.entries) {
           if (entry.kind === 'folder') {
@@ -7603,11 +7617,18 @@ async function scanAndGenerateStrmEntries({
         wakeWorkers()
 
         for (const entry of mediaEntries) {
-          if (mediaFiles >= scanLimits.mediaFiles) {
+          if (signal?.aborted || mediaFiles >= scanLimits.mediaFiles) {
             break
           }
 
           await generateMediaEntry(entry)
+        }
+
+        if (scannedDirectories - lastProgressScan >= 20) {
+          lastProgressScan = scannedDirectories
+          logLines.push(
+            `扫描进度: ${scannedDirectories} 目录, 生成 ${generated} / 跳过 ${skipped} / 失败 ${failed}`,
+          )
         }
       } catch (error) {
         failedDirectories += 1
@@ -7632,9 +7653,14 @@ async function scanAndGenerateStrmEntries({
     logLines.push('达到扫描上限，已停止继续递归。')
   }
 
+  logLines.push(
+    `扫描完成: ${scannedDirectories} 目录, 生成 ${generated} / 跳过 ${skipped} / 失败 ${failed}`,
+  )
+
   return {
     failedDirectories,
     failed,
+    failedEntries,
     generated,
     mediaFiles,
     scanLimitReached,
@@ -7829,7 +7855,7 @@ async function runPreStrmAiRename(task, storage, settings, logLines) {
   return result
 }
 
-async function executeTask(task, storage, strmSettings, settings = {}) {
+async function executeTask(task, storage, strmSettings, settings = {}, signal) {
   const startedAt = new Date()
   const outputPath = getTaskOutputVirtualPath(task.name, strmSettings.outputRoot)
   const outputDirectory = getTaskOutputDirectory(task.name, strmSettings.outputRoot)
@@ -7841,7 +7867,6 @@ async function executeTask(task, storage, strmSettings, settings = {}) {
     `保存目录: ${outputPath}`,
     `目录时间检查: ${task.directoryTimeCheck ? 'true' : 'false'}`,
     `增量生成模式: ${task.incremental ? 'true' : 'false'}`,
-    `生成前 AI 重命名: ${task.aiRenameBeforeStrm ? 'true' : 'false'}`,
     `预先刷新 OpenList 缓存: ${task.preRefreshOpenListCache ? 'true' : 'false'}`,
     `直链签名: ${shouldAppendAListSign(storage) ? 'true' : 'false'}`,
     `STRM 中转: ${shouldUseStrmRedirect(storage) ? 'true' : 'false'}`,
@@ -7852,12 +7877,6 @@ async function executeTask(task, storage, strmSettings, settings = {}) {
   ])
 
   await mkdir(outputDirectory, { recursive: true })
-
-  let aiRenameResult
-
-  if (task.aiRenameBeforeStrm) {
-    aiRenameResult = await runPreStrmAiRename(task, storage, settings, logLines)
-  }
 
   if (task.preRefreshOpenListCache) {
     if (storage.accessMethod === 'openlist') {
@@ -7885,6 +7904,7 @@ async function executeTask(task, storage, strmSettings, settings = {}) {
   let {
     failedDirectories,
     failed,
+    failedEntries,
     generated,
     mediaFiles,
     scanLimitReached,
@@ -7895,10 +7915,16 @@ async function executeTask(task, storage, strmSettings, settings = {}) {
     logLines,
     outputDirectory,
     settings,
+    signal,
     storage,
     strmSettings,
     task,
   })
+
+  // 检查是否被用户取消
+  if (signal?.aborted) {
+    throw new Error('ABORTED')
+  }
 
   let cleanupDeleted = 0
   let cleanupDetached = 0
@@ -7923,7 +7949,7 @@ async function executeTask(task, storage, strmSettings, settings = {}) {
   }
 
   const cleanupAllowed =
-    previousIndexAvailable && failed === 0 && failedDirectories === 0 && scanLimitReached !== true
+    !signal?.aborted && previousIndexAvailable && failed === 0 && failedDirectories === 0 && scanLimitReached !== true
 
   if (cleanupAllowed) {
     const cleanupResult = await cleanupStaleStrmFiles({
@@ -7981,14 +8007,22 @@ async function executeTask(task, storage, strmSettings, settings = {}) {
     scanLimitReached,
     skipped,
   })
-  const status =
-    aiRenameResult?.status === 'partial' && strmStatus === 'succeeded' ? 'partial' : strmStatus
+  const status = strmStatus
   const ok = status === 'succeeded'
   const partial = status === 'partial'
 
   logLines.push(
     `生成完成，共发现 ${mediaFiles} 个媒体文件，生成 ${generated} 个，跳过 ${skipped} 个，失败 ${failed} 个，目录读取失败 ${failedDirectories} 个，清理失效 STRM ${cleanupDeleted} 个。`,
   )
+
+  if (failedEntries && failedEntries.length > 0) {
+    logLines.push('------------------------------------------------------------')
+    logLines.push(`=== 失败详情 (${failedEntries.length} 个) ===`)
+    for (const entry of failedEntries) {
+      logLines.push(`  失败: ${entry.path} — ${entry.error}`)
+    }
+  }
+
   logLines.push(`${formatLocalDateTime(finishedAt)} 任务完成`)
   logLines.finish(status)
 
@@ -8002,13 +8036,6 @@ async function executeTask(task, storage, strmSettings, settings = {}) {
       cleanupRemovedDirectories,
       cleanupShared,
       cleanupSkipped,
-      aiRenameFailed: aiRenameResult?.progress.failed ?? 0,
-      aiRenameInventoryGroups: aiRenameResult?.incrementalInventory?.inventoryGroups ?? 0,
-      aiRenameSkipped: aiRenameResult?.progress.skipped ?? 0,
-      aiRenameStatus: aiRenameResult?.status ?? 'skipped',
-      aiRenameSubmittedGroups: aiRenameResult?.incrementalInventory?.submittedGroups ?? 0,
-      aiRenameSucceeded: aiRenameResult?.progress.succeeded ?? 0,
-      aiRenameUnchangedGroups: aiRenameResult?.incrementalInventory?.unchangedGroups ?? 0,
       failed,
       failedDirectories,
       finishedAt: finishedAt.toISOString(),
@@ -8058,15 +8085,59 @@ async function runTask(taskId) {
     throw new Error('任务引用的存储不存在')
   }
 
+  const abortController = new AbortController()
+  activeTaskControllers.set(taskId, abortController)
+
   await saveTaskRunState(taskId, { status: 'running' })
 
   let execution
 
   try {
-    execution = await executeTask(task, storage, settings.strm, settings)
+    execution = await executeTask(task, storage, settings.strm, settings, abortController.signal)
   } catch (error) {
     const failedAt = new Date()
     const currentLog = taskRuntimeLogs.get(taskId)?.log
+
+    if (abortController.signal.aborted) {
+      const stoppedLog = [
+        currentLog,
+        `------------------------------------------------------------`,
+        `${formatLocalDateTime(failedAt)} 任务已被用户停止`,
+      ]
+        .filter(Boolean)
+        .join('\n')
+
+      taskRuntimeLogs.set(taskId, {
+        log: stoppedLog,
+        status: 'idle',
+        updatedAt: failedAt.toISOString(),
+      })
+
+      await saveTaskRunState(taskId, {
+        lastLog: stoppedLog,
+        lastRunAt: failedAt.toISOString(),
+        nextRun: calculateNextRun(task.schedule),
+        status: 'idle',
+      })
+
+      return {
+        result: {
+          ok: false,
+          status: 'idle',
+          generated: 0,
+          skipped: 0,
+          failed: 0,
+          mediaFiles: 0,
+          scannedDirectories: 0,
+          failedDirectories: 0,
+          outputPath: getTaskOutputVirtualPath(task.name, settings.strm?.outputRoot || ''),
+          startedAt: failedAt.toISOString(),
+          finishedAt: failedAt.toISOString(),
+        },
+        task: await saveTaskRunState(taskId, { status: 'idle' }),
+      }
+    }
+
     const failedLog = [
       currentLog,
       `${formatLocalDateTime(failedAt)} 任务失败: ${getErrorMessage(error)}`,
@@ -8088,6 +8159,8 @@ async function runTask(taskId) {
     })
 
     throw error
+  } finally {
+    activeTaskControllers.delete(taskId)
   }
 
   const nextStatus = normalizeTaskStatus(
@@ -8140,6 +8213,10 @@ async function runTask(taskId) {
 }
 
 async function stopTask(taskId) {
+  const controller = activeTaskControllers.get(taskId)
+  if (controller) {
+    controller.abort()
+  }
   return saveTaskRunState(taskId, { status: 'idle' })
 }
 

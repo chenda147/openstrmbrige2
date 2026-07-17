@@ -4,7 +4,6 @@ import type { RouteObject } from 'react-router-dom'
 import { ApiAccessPage } from '../features/api-access/ApiAccessPage'
 import { LoginPage } from '../features/auth/LoginPage'
 import { useAuth } from '../features/auth/authContext'
-import { FileBrowserPage } from '../features/file-browser/FileBrowserPage'
 import { StorageManagementPage } from '../features/storage/StorageManagementPage'
 import { SystemSettingsPage } from '../features/settings/SystemSettingsPage'
 import { TaskManagementPage } from '../features/tasks/TaskManagementPage'
@@ -44,7 +43,6 @@ const routeDefinitions: RouteObject[] = [
       { index: true, element: <Navigate to={routes.tasks.path} replace /> },
       { path: routes.tasks.path.slice(1), element: <TaskManagementPage /> },
       { path: routes.storage.path.slice(1), element: <StorageManagementPage /> },
-      { path: routes.browser.path.slice(1), element: <FileBrowserPage /> },
       { path: routes.apiAccess.path.slice(1), element: <ApiAccessPage /> },
       { path: routes.settings.path.slice(1), element: <SystemSettingsPage /> },
       { path: '*', element: <Navigate to={routes.tasks.path} replace /> },
