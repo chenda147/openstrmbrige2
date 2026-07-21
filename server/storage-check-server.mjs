@@ -293,11 +293,11 @@ const scanLimits = {
   directories:
     Number.isFinite(configuredScanDirectoryLimit) && configuredScanDirectoryLimit > 0
       ? configuredScanDirectoryLimit
-      : 50000,
+      : Infinity,
   mediaFiles:
     Number.isFinite(configuredScanMediaFileLimit) && configuredScanMediaFileLimit > 0
       ? configuredScanMediaFileLimit
-      : 500000,
+      : Infinity,
 }
 
 const taskRuntimeLogs = new Map()
@@ -8536,7 +8536,7 @@ function createGe2oConfig(settings, storages) {
   strm:
     path-map:
 ${yamlLines(pathMaps, '      ')}
-    internal-redirect-enable: false
+    internal-redirect-enable: true
   download-strategy: direct
   local-media-roots: []
   custom-css-js:
